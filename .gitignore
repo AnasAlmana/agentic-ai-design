@@ -3,6 +3,15 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+images/
+*.png 
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.bmp
+*.tiff
+*.ico
 # C extensions
 *.so
 

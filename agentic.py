@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+NUM_IMAGES = 1
 # Load OpenAI API key from environment
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -25,6 +26,13 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 IMAGE_DESCRIPTION_PROMPT_TEMPLATE = """ 
 Describe the image in detail, focus on the main subject in the image usually in the center, 
 extract all brand info like brand name and slogan if applicable. Make sure to include all details of the image.
+
+IMPORTANT: If there is Arabic text in the image:
+- Clearly identify that Arabic text is present
+- Note the direction and layout of the Arabic text
+- Describe the style and positioning of Arabic text elements
+- Mention if there's bilingual text (Arabic with other languages)
+- Preserve the exact appearance and positioning of Arabic script elements
 """
 
 def describe_image(base64_image: str) -> dict:
@@ -54,17 +62,28 @@ creative_prompt = ChatPromptTemplate.from_messages([
     ("system", "You are a creative AI for marketing."),
     ("user", 
      "Here is the image description:\n\n{description}\n\n"
-     "Based on this description AND the actual image, generate 3 imaginative "
-     "**image generation prompts** to create new marketing visuals. "
-     "Return only JSON with keys: prompt1, prompt2, prompt3. "
+     f"Based on this description AND the actual image, generate {NUM_IMAGES} creative marketing enhancement idea. "
+     "Focus on ENHANCING the existing product presentation, NOT changing the product itself. "
+     "Consider: lighting improvements, background changes, additional props, better composition, "
+     "professional styling, premium presentation, seasonal themes, or lifestyle contexts. "
+     "KEEP the original product, brand, and packaging exactly the same. "
+     "Return only JSON with keys based on the number of images: prompt1, prompt2, etc."
      "Do NOT include any extra text or explanations."),
     ("user", [
         {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,{base64_image}"}}
     ])
 ])
 
+def creative_with_image_preservation(input_data: dict) -> dict:
+    """Wrapper to preserve base64_image through the creative step"""
+    ai_message = (creative_prompt | creative_llm).invoke(input_data)
+    return {
+        "ai_message": ai_message,
+        "base64_image": input_data["base64_image"],
+        "description": input_data["description"]
+    }
 
-creative_runnable = creative_prompt | creative_llm
+creative_runnable = RunnableLambda(creative_with_image_preservation)
 import re
 
 def parse_json_safe(text: str) -> dict:
@@ -75,34 +94,66 @@ def parse_json_safe(text: str) -> dict:
     else:
         raise ValueError("No JSON found in AI output")
 
-# --- Step 3: Prompts -> Images using GPT-4.1 with image_generation tool ---
-def generate_images_from_prompts(ai_message: AIMessage) -> dict:
+# --- Step 3: Prompts -> Images using GPT-4.1 with original image ---
+def generate_images_from_prompts(input_data: dict) -> dict:
+    ai_message = input_data["ai_message"]
+    base64_image = input_data["base64_image"]
+    description = input_data.get("description", "")
+    
     prompts_json = parse_json_safe(ai_message.content)
     images = {}
     
     for key, prompt in prompts_json.items():
         try:
             print(f"Generating image for {key}: {prompt}")
+            enhanced_text_prompt = f"""ORIGINAL IMAGE DESCRIPTION: {description}
+
+            ENHANCEMENT IDEA: {prompt}
+
+            STRICT INSTRUCTIONS:
+            - Generate a new image that enhances the original product presentation
+            - PRESERVE the exact same product, brand name, packaging, and product identity from the original image
+            - DO NOT change the product itself, its colors, shape, size, or branding
+            - Only enhance: lighting, background, composition, props, angel of view, or presentation style
+            - The product should remain clearly recognizable as the same item from the original image
+
+            CRITICAL TEXT HANDLING INSTRUCTIONS:
+            - Maintain all text, logos, and brand elements exactly as they appear in the original
+            - For Arabic text specifically:
+            * Arabic text MUST be written RIGHT-TO-LEFT (RTL direction)
+            * Arabic letters MUST connect properly and maintain correct letterforms
+            * Preserve Arabic script integrity with proper letter shapes (initial, medial, final, isolated forms)
+            * Keep Arabic text spacing and alignment consistent with original
+            * Arabic numerals should follow the correct Arabic-Indic numeral system if used in original
+            * Do NOT mirror or flip Arabic text - maintain proper RTL reading direction
+            * Ensure Arabic diacritics (tashkeel) are preserved if present in original
+            - For any bilingual text (Arabic + English/Latin), maintain the correct direction for each script
+            - Text should appear natural and readable and match exactly the original text, not distorted or backwards"""
+
             
-            # Use GPT-4.1 with image_generation tool
+            # Use GPT-4.1 with image generation tools, including original image
             response = client.responses.create(
                 model="gpt-4.1",
                 input=[
                     {
                         "role": "user",
                         "content": [
-                            {"type": "input_text", "text": f"Generate an image: {prompt}"}
-                        ]
+                            {"type": "input_text", "text":enhanced_text_prompt},
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:image/jpeg;base64,{base64_image}",
+                            },
+                        ],
                     }
                 ],
-                tools=[{"type": "image_generation"}],  # Enable image generation tool
+                tools=[{"type": "image_generation"}],
             )
             
             # Look for image_generation_call outputs
             image_generation_calls = [
                 output
                 for output in response.output
-                if hasattr(output, 'type') and output.type == "image_generation_call"
+                if output.type == "image_generation_call"
             ]
             
             if image_generation_calls:
@@ -114,7 +165,7 @@ def generate_images_from_prompts(ai_message: AIMessage) -> dict:
                 image_bytes = base64.b64decode(image_data)
                 
                 # Save image to file
-                file_path = f"{key}.png"
+                file_path = f"{key}_updated_prompts.png"
                 with open(file_path, "wb") as f:
                     f.write(image_bytes)
                 
@@ -145,7 +196,7 @@ chain = image_description_runnable | creative_runnable | image_generation_runnab
 
 # --- Run the chain ---
 if __name__ == "__main__":
-    image_path = "images/img.jpg"  # path to your input image
+    image_path = "images/menu.jpg"  # path to your input image
     base64_image = encode_image(image_path)
 
     result = chain.invoke(base64_image)
