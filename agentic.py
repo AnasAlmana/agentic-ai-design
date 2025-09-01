@@ -57,18 +57,21 @@ image_description_runnable = RunnableLambda(describe_image)
 
 # --- Step 2: Description + Image -> Creative Prompts ---
 creative_llm = ChatOpenAI(model="gpt-4o-mini", api_key=OPENAI_API_KEY)
+creative_prompt_template = """
+Your task is to generate prompt ideas for another image-image model for a given product image. 
+The product is usually in the center of the image. Focus on ehnancing the product presentation and not changing the product itself.
+You can change the background, scene, composition, lighting, props, angel of view, or presentation style.
+Be creative and think outside the box.
 
+Here is the image description:\n\n{description}\n\n and the actual image.
+
+Return only JSON with keys based on the number of images: prompt1, prompt2, etc.
+
+Start generate impressive ideas:
+"""
 creative_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a creative AI for marketing."),
-    ("user", 
-     "Here is the image description:\n\n{description}\n\n"
-     f"Based on this description AND the actual image, generate {NUM_IMAGES} creative marketing enhancement idea. "
-     "Focus on ENHANCING the existing product presentation, NOT changing the product itself. "
-     "Consider: lighting improvements, background changes, additional props, better composition, "
-     "professional styling, premium presentation, seasonal themes, or lifestyle contexts. "
-     "KEEP the original product, brand, and packaging exactly the same. "
-     "Return only JSON with keys based on the number of images: prompt1, prompt2, etc."
-     "Do NOT include any extra text or explanations."),
+    ("system", "You are a creative AI designer for marketing."),
+    ("user", creative_prompt_template),
     ("user", [
         {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,{base64_image}"}}
     ])
@@ -165,7 +168,7 @@ def generate_images_from_prompts(input_data: dict) -> dict:
                 image_bytes = base64.b64decode(image_data)
                 
                 # Save image to file
-                file_path = f"{key}_updated_prompts.png"
+                file_path = f"{key}_hashi.png"
                 with open(file_path, "wb") as f:
                     f.write(image_bytes)
                 
@@ -196,7 +199,7 @@ chain = image_description_runnable | creative_runnable | image_generation_runnab
 
 # --- Run the chain ---
 if __name__ == "__main__":
-    image_path = "images/menu.jpg"  # path to your input image
+    image_path = "images/hashi.jpg"  # path to your input image
     base64_image = encode_image(image_path)
 
     result = chain.invoke(base64_image)
